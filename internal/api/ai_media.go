@@ -32,8 +32,8 @@ type GenerateMediaResponse struct {
 	Message string `json:"message"`
 }
 
-// HandleGenerateAIMedia initiates an asynchronous AI generation job
-func (s *Server) HandleGenerateAIMedia(w http.ResponseWriter, r *http.Request) {
+// HandleGenerateIntelligentMedia initiates an asynchronous Intelligent media generation job
+func (s *Server) HandleGenerateIntelligentMedia(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -158,6 +158,42 @@ func (s *Server) processAIMediaJob(ctx context.Context, tc *firebase.TenantClien
 	}
 
 	log.Printf("[AI JOB COMPLETED] JobID: %s", jobID)
+}
+
+// HandleGetIntelligentMedia returns the latest generated media
+func (s *Server) HandleGetIntelligentMedia(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	tc := s.GetFirestoreForRequest(r)
+	if tc == nil || tc.Firestore == nil {
+		http.Error(w, `{"error":"server_error","message":"Firestore client not found"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Fetch from the ai_media_library collection
+	docs, err := tc.Firestore.Collection("ai_media_library").OrderBy("createdAt", firestore.Desc).Limit(50).Documents(r.Context()).GetAll()
+	if err != nil {
+		log.Printf("Failed to fetch intelligent media library: %v", err)
+		http.Error(w, `{"error":"server_error","message":"Failed to fetch media"}`, http.StatusInternalServerError)
+		return
+	}
+
+	var mediaList []map[string]interface{}
+	for _, doc := range docs {
+		data := doc.Data()
+		data["id"] = doc.Ref.ID
+		mediaList = append(mediaList, data)
+	}
+
+	if mediaList == nil {
+		mediaList = make([]map[string]interface{}, 0)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(mediaList)
 }
 
 // HandleGetViralTrends returns the currently cached viral trends

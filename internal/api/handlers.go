@@ -20,6 +20,7 @@ import (
 type Server struct {
 	DB        *sqlx.DB
 	Hub       *Hub
+	CfdHub    *CfdHub
 	Firebase  *firebase.Client         // Default tenant (Falooda & Co) — backwards compat
 	Tenants   *firebase.TenantManager  // Multi-tenant Firebase manager (nil = single-tenant mode)
 	Publisher events.RealtimePublisher // Decoupled event bus — today Firestore, tomorrow Redis
@@ -101,6 +102,7 @@ func (s *Server) HandleCreateOrder(w http.ResponseWriter, r *http.Request) {
 	} else {
 		order.Status = models.StatusPending
 	}
+	order.NeedsPrinting = true
 	order.CreatedAt = time.Now()
 
 	// --- 1.5. The "1-Click" Online Checkout Trap & POS Capture ---
@@ -152,8 +154,8 @@ func (s *Server) HandleCreateOrder(w http.ResponseWriter, r *http.Request) {
 
 		// Insert Main Order Record
 		insertOrderQuery := `
-			INSERT INTO orders (id, store_id, order_source, net_total, vat_total, service_charge, gross_total, status, created_at, table_number, customer_name, customer_phone, customer_id)
-			VALUES (:id, :store_id, :order_source, :net_total, :vat_total, :service_charge, :gross_total, :status, :created_at, :table_number, :customer_name, :customer_phone, :customer_id)
+			INSERT INTO orders (id, store_id, order_source, net_total, vat_total, service_charge, gross_total, status, needs_printing, created_at, table_number, customer_name, customer_phone, customer_id)
+			VALUES (:id, :store_id, :order_source, :net_total, :vat_total, :service_charge, :gross_total, :status, :needs_printing, :created_at, :table_number, :customer_name, :customer_phone, :customer_id)
 		`
 		if _, err := tx.NamedExec(insertOrderQuery, &order); err != nil {
 			log.Printf("Failed to insert main order: %v", err)
@@ -376,7 +378,7 @@ func (s *Server) HandleMigrate(w http.ResponseWriter, r *http.Request) {
 		"CREATE POLICY tenant_isolation_store_external_mappings ON store_external_mappings USING (store_id = current_setting('app.current_store_id', true)::uuid);",
 
 		"DROP POLICY IF EXISTS tenant_isolation_product_prices ON product_prices;",
-		"CREATE POLICY tenant_isolation_product_prices ON product_prices USING (store_id IS NULL OR store_id = current_setting('app.current_store_id', true)::uuid);",
+		"CREATE POLICY tenant_isolation_product_prices ON product_prices USING (current_setting('app.current_store_id', true) = '' OR store_id IS NULL OR store_id = current_setting('app.current_store_id', true)::uuid);",
 
 		"DROP POLICY IF EXISTS tenant_isolation_orders ON orders;",
 		"CREATE POLICY tenant_isolation_orders ON orders USING (store_id = current_setting('app.current_store_id', true)::uuid);",
@@ -428,12 +430,79 @@ func (s *Server) HandleMigrate(w http.ResponseWriter, r *http.Request) {
 
 	seedBytes, err := os.ReadFile("migrations/seed.sql")
 	if err == nil && len(seedBytes) > 0 {
+		// Temporarily disable RLS on all tenant-scoped tables for seeding
+		rlsTables := []string{
+			"store_external_mappings", "product_prices", "orders", "staff", "shifts",
+			"inventory_items", "stock_movements", "customer_scores",
+			"product_recommendations", "campaigns", "email_templates",
+		}
+		for _, t := range rlsTables {
+			s.DB.Exec("ALTER TABLE " + t + " DISABLE ROW LEVEL SECURITY")
+		}
+
 		if _, err := s.DB.Exec(string(seedBytes)); err != nil {
 			log.Printf("Seed failed: %v", err)
-			http.Error(w, `{"error":"seed_failed"}`, http.StatusInternalServerError)
+			// Re-enable RLS even on failure
+			for _, t := range rlsTables {
+				s.DB.Exec("ALTER TABLE " + t + " ENABLE ROW LEVEL SECURITY")
+				s.DB.Exec("ALTER TABLE " + t + " FORCE ROW LEVEL SECURITY")
+			}
+			http.Error(w, `{"error":"seed_failed","detail":"`+err.Error()+`"}`, http.StatusInternalServerError)
 			return
+		}
+
+		// Re-enable + force RLS after seeding
+		for _, t := range rlsTables {
+			s.DB.Exec("ALTER TABLE " + t + " ENABLE ROW LEVEL SECURITY")
+			s.DB.Exec("ALTER TABLE " + t + " FORCE ROW LEVEL SECURITY")
 		}
 	}
 
 	w.Write([]byte("Migrations and seeding successful!"))
+}
+
+// HandleCfdUpdate receives POS cart state via POST and broadcasts it instantly to connected CFD screens.
+func (s *Server) HandleCfdUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Default to Falooda store ID if no header provided
+	storeIDStr := r.Header.Get("X-Store-ID")
+	if storeIDStr == "" {
+		storeIDStr = "f4100da2-1111-1111-1111-000000000001"
+	}
+	
+	storeID, err := uuid.Parse(storeIDStr)
+	if err != nil {
+		http.Error(w, "Invalid X-Store-ID", http.StatusBadRequest)
+		return
+	}
+
+	// Read the entire payload 
+	// Max ~64KB per update, so BodyLimitMiddleware is good enough
+	var payload map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		log.Printf("CFD update decode error: %v", err)
+		http.Error(w, "Invalid CFD payload format", http.StatusBadRequest)
+		return
+	}
+
+	// Re-encode to send as raw bytes
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, "Error encoding CFD payload", http.StatusInternalServerError)
+		return
+	}
+
+	// Broadcast it to the dedicated CFD hub
+	s.CfdHub.Broadcast <- CfdMessage{
+		StoreID: storeID,
+		Payload: bytes,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok"}`))
 }

@@ -400,3 +400,115 @@ func (s *Server) HandleGetOrderHistory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }
+
+// HandleGetPrintQueue fetches orders that have needs_printing = true.
+// GET /api/v1/stores/:id/print-queue
+func (s *Server) HandleGetPrintQueue(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		http.Error(w, "Invalid store ID", http.StatusBadRequest)
+		return
+	}
+	storeID := parts[4]
+
+	if s.DB == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]OrderWithItems{})
+		return
+	}
+
+	query := `SELECT id, store_id, order_source, net_total, vat_total, service_charge, gross_total, status, created_at, table_number, customer_name, customer_phone, payment_status, payment_method
+		FROM orders 
+		WHERE store_id = $1 AND needs_printing = true
+		ORDER BY created_at ASC LIMIT 50`
+	
+	var orders []OrderListItem
+	if err := s.DB.Select(&orders, query, storeID); err != nil {
+		log.Printf("Failed to fetch print queue: %v", err)
+		http.Error(w, `{"error":"server_error","message":"Failed to fetch print queue"}`, http.StatusInternalServerError)
+		return
+	}
+
+	result := make([]OrderWithItems, len(orders))
+	for i, order := range orders {
+		var items []OrderItemRow
+		itemQuery := `SELECT id, order_id, product_id, name, price_paid FROM order_items WHERE order_id = $1`
+		if err := s.DB.Select(&items, itemQuery, order.ID); err != nil {
+			log.Printf("Failed to fetch items for order %s: %v", order.ID, err)
+			items = []OrderItemRow{}
+		}
+		result[i] = OrderWithItems{
+			OrderListItem: order,
+			Items:         items,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+// HandleMarkPrinted marks an order as printed.
+// PATCH /api/v1/orders/:id/printed
+func (s *Server) HandleMarkPrinted(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		http.Error(w, "Invalid order ID", http.StatusBadRequest)
+		return
+	}
+	orderID := parts[4]
+
+	if s.DB != nil {
+		updateQuery := `UPDATE orders SET needs_printing = false WHERE id = $1`
+		if _, err := s.DB.Exec(updateQuery, orderID); err != nil {
+			log.Printf("Failed to mark order as printed: %v", err)
+			http.Error(w, `{"error":"server_error","message":"Failed to mark order as printed"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":   "success",
+		"order_id": orderID,
+		"printed":  "true",
+	})
+}
+
+// HandleReprint marks an order as needing printing (queueing it for the hardware bridge).
+// PATCH /api/v1/orders/:id/reprint
+func (s *Server) HandleReprint(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		http.Error(w, "Invalid order ID", http.StatusBadRequest)
+		return
+	}
+	orderID := parts[4]
+
+	if s.DB != nil {
+		updateQuery := `UPDATE orders SET needs_printing = true WHERE id = $1`
+		if _, err := s.DB.Exec(updateQuery, orderID); err != nil {
+			log.Printf("Failed to mark order for reprint: %v", err)
+			http.Error(w, `{"error":"server_error","message":"Failed to mark order for reprint"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":   "success",
+		"order_id": orderID,
+		"reprinted": "true",
+	})
+}

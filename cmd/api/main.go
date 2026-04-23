@@ -213,6 +213,10 @@ func main() {
 	hub := api.NewHub()
 	go hub.Run()
 
+	// 4.5 Initialize Customer Facing Display WebSocket Hub
+	cfdHub := api.NewCfdHub()
+	go cfdHub.Run()
+
 	// 5. Initialize Event Bus (Decoupled Real-Time Publisher)
 	// Today: Firestore adapter. Future: swap to Redis with zero handler changes.
 	var publisher events.RealtimePublisher
@@ -238,6 +242,7 @@ func main() {
 	server := &api.Server{
 		DB:        db,
 		Hub:       hub,
+		CfdHub:    cfdHub,
 		Firebase:  fb,
 		Tenants:   tm,
 		Publisher: publisher,
@@ -288,6 +293,14 @@ func main() {
 			AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandleRefundOrder))(w, r)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/printed") {
+			AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandleMarkPrinted))(w, r)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/reprint") {
+			AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandleReprint))(w, r)
+			return
+		}
 		// Generic order update (dual-write: Postgres + Firestore)
 		// Used by KDS bump, POS status changes, and WaiterPad updates
 		if r.Method == http.MethodPatch || r.Method == http.MethodPost {
@@ -328,6 +341,10 @@ func main() {
 		}
 		if strings.HasSuffix(r.URL.Path, "/orders") {
 			AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandleGetOrders))(w, r)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/print-queue") {
+			AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandleGetPrintQueue))(w, r)
 			return
 		}
 		http.NotFound(w, r)
@@ -494,11 +511,16 @@ func main() {
 	// KDS Sockets (Connected to React Screen)
 	mux.HandleFunc("/ws", hub.ServeWs)
 
-	// ─── AI Media Studio ───
-	mux.HandleFunc("/api/v1/ai/generate", AuthMiddleware(fb, tm, BodyLimitMiddleware(mb1, server.HandleGenerateAIMedia)))
-	mux.HandleFunc("/api/v1/ai/trends", AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandleGetViralTrends)))
-	mux.HandleFunc("/api/v1/ai/publish/instagram", AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandlePublishToInstagram)))
-	mux.HandleFunc("/api/v1/ai/publish/tiktok", AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandlePublishToTikTok)))
+	// ─── Customer Facing Display (CFD) WebSocket & REST Push ───
+	mux.HandleFunc("/ws/cfd", cfdHub.ServeCfdWs)
+	mux.HandleFunc("/api/v1/cfd/update", AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandleCfdUpdate)))
+
+	// ─── Intelligent Media Studio ───
+	mux.HandleFunc("/api/v1/intelligent/media", AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandleGetIntelligentMedia)))
+	mux.HandleFunc("/api/v1/intelligent/generate", AuthMiddleware(fb, tm, BodyLimitMiddleware(mb1, server.HandleGenerateIntelligentMedia)))
+	mux.HandleFunc("/api/v1/intelligent/trends", AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandleGetViralTrends)))
+	mux.HandleFunc("/api/v1/intelligent/publish/instagram", AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandlePublishToInstagram)))
+	mux.HandleFunc("/api/v1/intelligent/publish/tiktok", AuthMiddleware(fb, tm, BodyLimitMiddleware(kb64, server.HandlePublishToTikTok)))
 	mux.HandleFunc("/api/v1/internal/cron/scrape-trends", MigrateKeyMiddleware(BodyLimitMiddleware(kb64, server.HandleScrapeViralTrendsCron)))
 
 	// Direct Delivery Integrations (No Middleman)

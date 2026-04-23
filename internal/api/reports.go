@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"restaurant-os/internal/email"
 )
 
 // DailyReportSummary contains the calculated Z-Report data
@@ -47,7 +49,6 @@ func (s *Server) HandleDailyReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
 
 	// Parse optional date param (default: today)
 	dateStr := r.URL.Query().Get("date")
@@ -145,23 +146,16 @@ func (s *Server) HandleDailyReport(w http.ResponseWriter, r *http.Request) {
 	// 4. Generate HTML email body
 	htmlBody := generateZReportHTML(summary)
 
-	// 5. Write to Firestore `mail` collection to trigger the email extension
-	if s.Firebase != nil && s.Firebase.Firestore != nil {
-		mailDoc := map[string]interface{}{
-			"to":   []string{"sales@faloodaandco.co.uk"},
-			"from": "Falooda & Co Reports <noreply@faloodaandco.co.uk>",
-			"message": map[string]interface{}{
-				"subject": fmt.Sprintf("📊 Falooda & Co — Daily Z-Report — %s", summary.Date),
-				"html":    htmlBody,
-			},
-		}
-
-		_, _, err := s.Firebase.Firestore.Collection("mail").Add(ctx, mailDoc)
-		if err != nil {
-			log.Printf("Daily Report: Failed to queue email: %v", err)
-		} else {
-			log.Printf("Daily Report: Email queued for %s", summary.Date)
-		}
+	// 5. Send Email via direct SMTP
+	err := email.SendMarketingEmail(
+		"sales@faloodaandco.co.uk",
+		fmt.Sprintf("📊 Falooda & Co — Daily Z-Report — %s", summary.Date),
+		htmlBody,
+	)
+	if err != nil {
+		log.Printf("Daily Report: Failed to send email via SMTP: %v", err)
+	} else {
+		log.Printf("Daily Report: Email sent via SMTP for %s", summary.Date)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS orders (
     service_charge DECIMAL(12,2) DEFAULT 0.00,
     gross_total DECIMAL(12,2) DEFAULT 0.00,
     status VARCHAR(20) DEFAULT 'pending', -- 'pending', 'kitchen', 'completed', 'paid'
+    needs_printing BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

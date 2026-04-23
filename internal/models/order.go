@@ -30,6 +30,7 @@ type InternalOrder struct {
 	ServiceCharge float64     `json:"service_charge" db:"service_charge"`
 	GrossTotal    float64     `json:"gross_total" db:"gross_total"`
 	Status        string      `json:"status" db:"status"`
+	NeedsPrinting bool      `json:"needs_printing" db:"needs_printing"`
 	CreatedAt     time.Time   `json:"created_at" db:"created_at"`
 
 	// Added for QR Table Ordering + Collection
