@@ -1,3 +1,13 @@
+package api
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"time"
+
+	"cloud.google.com/go/firestore"
+)
 
 // PublishMediaRequest represents the payload for publishing to a social platform
 type PublishMediaRequest struct {

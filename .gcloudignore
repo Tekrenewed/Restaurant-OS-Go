@@ -2,6 +2,7 @@
 .gitignore
 *.exe
 scratch/
+scripts/
 .keys/
 docs/
 frontend/
