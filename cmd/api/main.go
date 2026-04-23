@@ -26,9 +26,24 @@ var allowedOrigins = map[string]bool{
 	"https://faloodaandco.web.app":   true,
 	"https://faloodaandco.co.uk":     true,
 	"https://www.faloodaandco.co.uk": true,
-	// Local development
-	"http://localhost:5173": true, // Vite dev server
-
+	// Azmos Peri Peri
+	"https://azmos-peri-peri.vercel.app": true,
+	"https://www.azomsgrill.co.uk":       true,
+	"https://azomsgrill.co.uk":           true,
+	// Taste of Village Hayes
+	"https://hootsnkeks-36451.web.app":    true,
+	"https://tasteofvillagehayes.co.uk":   true,
+	"https://www.tasteofvillagehayes.co.uk": true,
+	// Taste of Village Slough (future — GCP project TBD)
+	"https://tasteofvillageslough.web.app": true,
+	// Yum Sing
+	"https://yumsing.web.app": true,
+	// Local development (multiple ports for running brands simultaneously)
+	"http://localhost:5173": true, // Vite dev server (Falooda)
+	"http://localhost:5174": true, // Vite dev server (Azmos)
+	"http://localhost:5175": true, // Vite dev server (TOV)
+	"http://localhost:5176": true, // Vite dev server (Yumsing)
+	"http://localhost:3000": true, // Next.js dev server (Azmos)
 }
 
 // RecoveryMiddleware ensures that a single bad request doesn't crash the entire server
