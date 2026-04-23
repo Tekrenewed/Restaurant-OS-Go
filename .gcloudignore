@@ -1,0 +1,8 @@
+.git
+.gitignore
+*.exe
+scratch/
+.keys/
+docs/
+frontend/
+get_staff_pins.go

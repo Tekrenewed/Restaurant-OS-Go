@@ -1,0 +1,172 @@
+openapi: 3.0.3
+info:
+  title: Falooda & Co Restaurant OS API
+  description: |
+    Central API for all order processing across POS, Web, Kiosk, and third-party delivery platforms.
+    This is the SINGLE canonical write path — all orders flow through this API to PostgreSQL,
+    then get synced to Firestore for real-time KDS/POS updates.
+  version: 1.1.0
+  contact:
+    name: Falooda & Co Tech
+    
+servers:
+  - url: https://restaurant-os-3522407115.europe-west2.run.app
+    description: Production (Cloud Run)
+  - url: https://restaurant-os-staging-3522407115.europe-west2.run.app
+    description: Staging (Cloud Run)
+  - url: http://localhost:8080
+    description: Local Development
+
+paths:
+  /api/v1/orders:
+    post:
+      summary: Create a new order
+      description: |
+        Accepts orders from all sources (POS, Web, Kiosk, UberEats, etc).
+        Calculates UK VAT, optionally applies service charge, saves to PostgreSQL,
+        syncs to Firestore for real-time KDS updates, and broadcasts via WebSocket.
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+            examples:
+              webOrder:
+                summary: Website collection order
+                value:
+                  external_id: "ORD-1712345678901"
+                  store_id: "00000000-0000-0000-0000-000000000000"
+                  source: "Web"
+                  customer_name: "John Doe"
+                  customer_phone: "07700000000"
+                  apply_service_charge: false
+                  items:
+                    - name: "Classic Falooda"
+                      price_paid: 6.99
+                    - name: "Masala Chai"
+                      price_paid: 2.99
+              posOrder:
+                summary: POS walk-in order
+                value:
+                  store_id: "00000000-0000-0000-0000-000000000000"
+                  source: "POS"
+                  customer_name: "Walk-in"
+                  apply_service_charge: false
+                  items:
+                    - name: "Pistachio Kulfi"
+                      price_paid: 4.99
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderSummary'
+        '400':
+          description: Invalid request payload
+        '500':
+          description: Server error (database or Firestore failure)
+
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: API is healthy
+
+components:
+  schemas:
+    CreateOrderRequest:
+      type: object
+      required:
+        - source
+        - items
+      properties:
+        external_id:
+          type: string
+          description: Frontend-generated order ID (e.g. ORD-1712345678901). Used as Firestore doc ID for Web orders.
+          example: "ORD-1712345678901"
+        store_id:
+          type: string
+          format: uuid
+          description: Store UUID. Defaults to main store if zero UUID provided.
+        source:
+          type: string
+          enum: [POS, Web, UberEats, Deliveroo, JustEat]
+          description: Where the order originated
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItemRequest'
+        customer_name:
+          type: string
+          nullable: true
+        customer_phone:
+          type: string
+          nullable: true
+        table_number:
+          type: integer
+          nullable: true
+          description: For dine-in orders only
+        apply_service_charge:
+          type: boolean
+          default: false
+
+    OrderItemRequest:
+      type: object
+      required:
+        - name
+        - price_paid
+      properties:
+        name:
+          type: string
+          example: "Classic Falooda"
+        price_paid:
+          type: number
+          format: double
+          description: Total price for this line item (price × quantity)
+          example: 6.99
+        is_takeaway:
+          type: boolean
+          default: false
+        is_zero_rated:
+          type: boolean
+          default: false
+
+    OrderSummary:
+      type: object
+      description: Returned after successful order creation
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        net_total:
+          type: number
+          format: double
+        vat_total:
+          type: number
+          format: double
+        service_charge:
+          type: number
+          format: double
+        gross_total:
+          type: number
+          format: double
+
+    OrderStatus:
+      type: string
+      enum:
+        - web_holding   # Web order received, awaiting staff action
+        - pending       # Sent to kitchen (in KDS queue)
+        - preparing     # Kitchen is actively making this order
+        - ready         # Ready for collection/delivery
+        - completed     # Collected/delivered
+        - no_show       # Customer didn't show up
+      description: |
+        The canonical set of order statuses. These are defined in:
+        - Go: restaurant-os/internal/models/status.go
+        - TypeScript: frontend/lib/statusConstants.ts
+        
+        NEVER use raw strings — always reference the constants.

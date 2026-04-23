@@ -1,0 +1,39 @@
+# Go
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+
+# Environment Variables
+.env
+.env.local
+
+# Docker Data
+/pgdata/
+
+# Frontend (React/Vite)
+node_modules/
+dist/
+dist-ssr/
+*.local
+.npm/
+
+# IDE and OS files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+
+# Materialised credential keys (pulled from Secret Manager)
+.keys/
+*-key.json
+cloud-sql-proxy*
