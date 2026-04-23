@@ -344,31 +344,74 @@ func (s *Server) HandleMigrate(w http.ResponseWriter, r *http.Request) {
 		// Campaign daily rate limit tracking
 		"ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS daily_send_limit INT DEFAULT 500;",
 		
-		// ─── Phase 5: Multi-Tenant Row Level Security (RLS) ───
-		// Note: The app currently connects as 'postgres' (superuser), which bypasses RLS by default.
-		// These policies are laid down as the foundation. To enforce them, we must either use
-		// FORCE ROW LEVEL SECURITY or connect as a restricted non-superuser role in the future,
-		// and wrap queries in transactions setting 'app.tenant_id'.
-		"ALTER TABLE customers ENABLE ROW LEVEL SECURITY;",
+		// ─── Phase 5: Comprehensive Multi-Tenant Row Level Security (RLS) ───
+		// Standardized on app.current_store_id (set per-request by Go middleware).
+		// Drop old policies that used app.tenant_id to avoid conflicts.
+		"DROP POLICY IF EXISTS tenant_isolation_customers ON customers;",
+		"DROP POLICY IF EXISTS tenant_isolation_orders ON orders;",
+		"DROP POLICY IF EXISTS tenant_isolation_campaigns ON campaigns;",
+		"DROP POLICY IF EXISTS tenant_isolation_email_templates ON email_templates;",
+		"DROP POLICY IF EXISTS tenant_isolation_staff ON staff;",
+
+		// Enable RLS on all 11 tenant-scoped tables
+		"ALTER TABLE store_external_mappings ENABLE ROW LEVEL SECURITY;",
+		"ALTER TABLE product_prices ENABLE ROW LEVEL SECURITY;",
 		"ALTER TABLE orders ENABLE ROW LEVEL SECURITY;",
+		"ALTER TABLE staff ENABLE ROW LEVEL SECURITY;",
+		"ALTER TABLE shifts ENABLE ROW LEVEL SECURITY;",
+		"ALTER TABLE inventory_items ENABLE ROW LEVEL SECURITY;",
+		"ALTER TABLE stock_movements ENABLE ROW LEVEL SECURITY;",
+		"ALTER TABLE customer_scores ENABLE ROW LEVEL SECURITY;",
+		"ALTER TABLE product_recommendations ENABLE ROW LEVEL SECURITY;",
 		"ALTER TABLE campaigns ENABLE ROW LEVEL SECURITY;",
 		"ALTER TABLE email_templates ENABLE ROW LEVEL SECURITY;",
-		"ALTER TABLE staff ENABLE ROW LEVEL SECURITY;",
-		
-		"DROP POLICY IF EXISTS tenant_isolation_customers ON customers;",
-		"CREATE POLICY tenant_isolation_customers ON customers USING (store_id = current_setting('app.tenant_id', true)::uuid);",
-		
+
+		// Create RLS policies using app.current_store_id
+		"DROP POLICY IF EXISTS tenant_isolation_store_external_mappings ON store_external_mappings;",
+		"CREATE POLICY tenant_isolation_store_external_mappings ON store_external_mappings USING (store_id = current_setting('app.current_store_id', true)::uuid);",
+
+		"DROP POLICY IF EXISTS tenant_isolation_product_prices ON product_prices;",
+		"CREATE POLICY tenant_isolation_product_prices ON product_prices USING (store_id IS NULL OR store_id = current_setting('app.current_store_id', true)::uuid);",
+
 		"DROP POLICY IF EXISTS tenant_isolation_orders ON orders;",
-		"CREATE POLICY tenant_isolation_orders ON orders USING (store_id = current_setting('app.tenant_id', true)::uuid);",
-		
-		"DROP POLICY IF EXISTS tenant_isolation_campaigns ON campaigns;",
-		"CREATE POLICY tenant_isolation_campaigns ON campaigns USING (store_id = current_setting('app.tenant_id', true)::uuid);",
-		
-		"DROP POLICY IF EXISTS tenant_isolation_email_templates ON email_templates;",
-		"CREATE POLICY tenant_isolation_email_templates ON email_templates USING (store_id = current_setting('app.tenant_id', true)::uuid);",
+		"CREATE POLICY tenant_isolation_orders ON orders USING (store_id = current_setting('app.current_store_id', true)::uuid);",
 
 		"DROP POLICY IF EXISTS tenant_isolation_staff ON staff;",
-		"CREATE POLICY tenant_isolation_staff ON staff USING (store_id = current_setting('app.tenant_id', true)::uuid);",
+		"CREATE POLICY tenant_isolation_staff ON staff USING (store_id = current_setting('app.current_store_id', true)::uuid);",
+
+		"DROP POLICY IF EXISTS tenant_isolation_shifts ON shifts;",
+		"CREATE POLICY tenant_isolation_shifts ON shifts USING (store_id = current_setting('app.current_store_id', true)::uuid);",
+
+		"DROP POLICY IF EXISTS tenant_isolation_inventory_items ON inventory_items;",
+		"CREATE POLICY tenant_isolation_inventory_items ON inventory_items USING (store_id IS NULL OR store_id = current_setting('app.current_store_id', true)::uuid);",
+
+		"DROP POLICY IF EXISTS tenant_isolation_stock_movements ON stock_movements;",
+		"CREATE POLICY tenant_isolation_stock_movements ON stock_movements USING (store_id = current_setting('app.current_store_id', true)::uuid);",
+
+		"DROP POLICY IF EXISTS tenant_isolation_customer_scores ON customer_scores;",
+		"CREATE POLICY tenant_isolation_customer_scores ON customer_scores USING (store_id = current_setting('app.current_store_id', true)::uuid);",
+
+		"DROP POLICY IF EXISTS tenant_isolation_product_recommendations ON product_recommendations;",
+		"CREATE POLICY tenant_isolation_product_recommendations ON product_recommendations USING (store_id = current_setting('app.current_store_id', true)::uuid);",
+
+		"DROP POLICY IF EXISTS tenant_isolation_campaigns ON campaigns;",
+		"CREATE POLICY tenant_isolation_campaigns ON campaigns USING (store_id = current_setting('app.current_store_id', true)::uuid);",
+
+		"DROP POLICY IF EXISTS tenant_isolation_email_templates ON email_templates;",
+		"CREATE POLICY tenant_isolation_email_templates ON email_templates USING (store_id = current_setting('app.current_store_id', true)::uuid);",
+
+		// FORCE RLS even for table owner (postgres superuser)
+		"ALTER TABLE store_external_mappings FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE product_prices FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE orders FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE staff FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE shifts FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE inventory_items FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE stock_movements FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE customer_scores FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE product_recommendations FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE campaigns FORCE ROW LEVEL SECURITY;",
+		"ALTER TABLE email_templates FORCE ROW LEVEL SECURITY;",
 	}
 	for _, q := range queries {
 		if _, err := s.DB.Exec(q); err != nil {
