@@ -248,6 +248,11 @@ func (s *Server) HandleCreateOrder(w http.ResponseWriter, r *http.Request) {
 
 // HandleMigrate forcefully runs pending DDL statements
 func (s *Server) HandleMigrate(w http.ResponseWriter, r *http.Request) {
+	if s.DB == nil {
+		http.Error(w, `{"error":"database_unavailable","message":"No database connection. Check DATABASE_URL."}`, http.StatusServiceUnavailable)
+		return
+	}
+
 	// Step 0: Run the full schema.sql first to ensure all tables exist
 	schemaBytes, err := os.ReadFile("migrations/schema.sql")
 	if err == nil && len(schemaBytes) > 0 {
