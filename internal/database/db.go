@@ -15,9 +15,19 @@ import (
 func InitDB() *sqlx.DB {
 	dsn := strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	if dsn == "" {
-		log.Println("DATABASE_URL not set, running without database")
+		log.Println("[DB] DATABASE_URL not set, running without database")
 		return nil
 	}
+
+	// Log a masked version for debugging (show host, hide password)
+	maskedDSN := dsn
+	if idx := strings.Index(dsn, "password="); idx >= 0 {
+		end := strings.Index(dsn[idx:], " ")
+		if end > 0 {
+			maskedDSN = dsn[:idx] + "password=***" + dsn[idx+end:]
+		}
+	}
+	log.Printf("[DB] DATABASE_URL present (len=%d): %s", len(dsn), maskedDSN)
 
 	// Auto-detect Cloud Run environment and construct Cloud SQL Unix socket DSN
 	// if the current DSN points to localhost (development value)
@@ -33,7 +43,7 @@ func InitDB() *sqlx.DB {
 		dbName := "restaurant_os"
 		dsn = fmt.Sprintf("host=%s/%s user=%s dbname=%s sslmode=disable",
 			socketDir, instanceConn, dbUser, dbName)
-		log.Printf("Cloud SQL Unix socket mode: connecting via %s/%s", socketDir, instanceConn)
+		log.Printf("[DB] Cloud SQL Unix socket mode: connecting via %s/%s", socketDir, instanceConn)
 	}
 
 	var db *sqlx.DB
@@ -43,7 +53,7 @@ func InitDB() *sqlx.DB {
 	for i := 0; i < 5; i++ {
 		db, err = sqlx.Open("postgres", dsn)
 		if err != nil {
-			log.Printf("Attempt %d: Could not open DB: %v", i+1, err)
+			log.Printf("[DB] Attempt %d/5: Could not open DB: %v", i+1, err)
 			time.Sleep(2 * time.Second)
 			continue
 		}
@@ -55,17 +65,17 @@ func InitDB() *sqlx.DB {
 
 		// Test the connection
 		if err = db.Ping(); err != nil {
-			log.Printf("Attempt %d: Database ping failed: %v", i+1, err)
+			log.Printf("[DB] Attempt %d/5: Ping failed: %v", i+1, err)
 			db.Close()
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		log.Println("Connected to PostgreSQL successfully")
+		log.Println("[DB] ✅ Connected to PostgreSQL successfully")
 		return db
 	}
 
 	// Don't crash the server — run without DB and log the error
-	log.Printf("WARNING: Could not connect to PostgreSQL after 5 attempts: %v (running without database)", err)
+	log.Printf("[DB] ❌ FATAL: Could not connect to PostgreSQL after 5 attempts: %v (running without database)", err)
 	return nil
 }
